@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Staff Guestlist View</title>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f7f6;
+            padding: 20px;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        #search-bar {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+        th, td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f8f8f8;
+            font-weight: bold;
+            color: #555;
+            position: sticky;
+            top: 0;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+        .status-checked-in {
+            color: #28a745; /* Green */
+            font-weight: bold;
+        }
+        .status-not-checked-in {
+            color: #dc3545; /* Red */
+        }
+        .toggle-btn {
+            background-color: #ffc107;
+            color: #333;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .toggle-btn:hover {
+            background-color: #e0a800;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Staff Guestlist (Real-Time)</h1>
+        <input type="text" id="search-bar" placeholder="Quick Search: Name or Booking Code...">
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Booking Code</th>
+                    <th>Status</th>
+                    <th>Arrival Time</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="guestlist-body">
+                <tr><td colspan="5" style="text-align: center;">Loading guestlist...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script type="module">
+        // --------------------------------------------------------------------------------
+        // FIREBASE MODULAR SDK IMPORTS (v9+)
+        // --------------------------------------------------------------------------------
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
+
+        // --------------------------------------------------------------------------------
+        // 1. FIREBASE CONFIGURATION (INTEGRATED)
+        // --------------------------------------------------------------------------------
+        const firebaseConfig = {
+            apiKey: "AIzaSyC_vBN_3ET30LbitHhxO3YQXCHBN6hC1K0",
+            authDomain: "live-event-check-in-5de5a.firebaseapp.com",
+            projectId: "live-event-check-in-5de5a",
+            storageBucket: "live-event-check-in-5de5a.firebasestorage.app",
+            messagingSenderId: "265589254654",
+            appId: "1:265589254654:web:f1e76486004749399938af"
+        };
+        
+        // Initialize Firebase and Firestore
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const guestsCollection = collection(db, 'guests');
+        // --------------------------------------------------------------------------------
+
+        const guestlistBody = document.getElementById('guestlist-body');
+        const searchInput = document.getElementById('search-bar');
+        let allGuests = []; // Cache to hold all guest data
+
+        // Function to format Firestore Timestamp to a readable string
+        function formatArrivalTime(timestamp) {
+            if (!timestamp) return 'N/A';
+            const date = timestamp.toDate();
+            // Format example: 10:30:00 AM 12/10/2025
+            return `${date.toLocaleTimeString()} ${date.toLocaleDateString()}`;
+        }
+
+        // Function to render the list based on current data and search term
+        function renderGuestlist(guestsData, searchTerm = '') {
+            guestlistBody.innerHTML = ''; // Clear the current list
+            const lowerSearchTerm = searchTerm.toLowerCase();
+
+            // 1. Filter Guests
+            const filteredGuests = guestsData.filter(guest => {
+                const nameMatch = guest.name.toLowerCase().includes(lowerSearchTerm);
+                // Ensure bookingCode exists before trying to access it
+                const codeMatch = guest.bookingCode && guest.bookingCode.toLowerCase().includes(lowerSearchTerm); 
+                return nameMatch || codeMatch;
+            });
+
+            // 2. Render the Filtered List
+            if (filteredGuests.length === 0) {
+                 const row = document.createElement('tr');
+                 row.innerHTML = `<td colspan="5" style="text-align: center;">No guests match your search criteria.</td>`;
+                 guestlistBody.appendChild(row);
+                 return;
+            }
+
+            filteredGuests.forEach(guest => {
+                const row = document.createElement('tr');
+                const statusClass = guest.checkedIn ? 'status-checked-in' : 'status-not-checked-in';
+                const statusText = guest.checkedIn ? 'Checked In' : 'Not Checked In';
+                const buttonText = guest.checkedIn ? 'Mark Not Checked In' : 'Mark Checked In';
+
+                row.innerHTML = `
+                    <td>${guest.name}</td>
+                    <td>${guest.bookingCode || 'N/A'}</td>
+                    <td class="${statusClass}">${statusText}</td>
+                    <td>${formatArrivalTime(guest.arrivalTime)}</td>
+                    <td><button data-id="${guest.id}" data-status="${guest.checkedIn}" class="toggle-btn">${buttonText}</button></td>
+                `;
+                guestlistBody.appendChild(row);
+            });
+        }
+        
+        // 3. Real-time Listener (Core of the Staff Page)
+        const q = query(guestsCollection, orderBy('name'));
+        onSnapshot(q, (snapshot) => {
+            allGuests = [];
+            snapshot.forEach(docSnap => {
+                // Build the cache array, including the document ID
+                allGuests.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            // Re-render the list using the current search term
+            renderGuestlist(allGuests, searchInput.value);
+        }, error => {
+            console.error("Error getting real-time snapshot: ", error);
+            guestlistBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">Error loading data: ${error.message}</td></tr>`;
+        });
+        
+        // 4. Update Function
+        async function toggleCheckInStatus(guestId, currentStatusString) {
+            const currentStatus = currentStatusString === 'true'; // Convert string 'true'/'false' to boolean
+            const newStatus = !currentStatus;
+
+            const updateData = {
+                checkedIn: newStatus,
+                // If checking in, set the time; if checking out, set to null (clear time)
+                arrivalTime: newStatus ? serverTimestamp() : null 
+            };
+            
+            try {
+                const guestRef = doc(db, 'guests', guestId);
+                await updateDoc(guestRef, updateData);
+                // The real-time listener handles the visual update automatically!
+            } catch (error) {
+                console.error("Error updating document: ", error);
+                alert('Failed to update check-in status. See console for details.');
+            }
+        }
+
+        // 5. Event Listeners for Search and Toggle Buttons
+        searchInput.addEventListener('input', () => {
+            // This is efficient: we only re-filter the local 'allGuests' cache, not hit the database.
+            renderGuestlist(allGuests, searchInput.value);
+        });
+
+        // Delegate click handler for the toggle button
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('toggle-btn')) {
+                const guestId = e.target.dataset.id;
+                const currentStatus = e.target.dataset.status; // This is a string ('true' or 'false')
+                toggleCheckInStatus(guestId, currentStatus);
+            }
+        });
+    </script>
+</body>
+</html>
